@@ -1,0 +1,128 @@
+From 869bc814627d95cfaee7b6664de5e7f074cc6ea9 Mon Sep 17 00:00:00 2001
+From: Chris Busillo <info@shinycomputers.com>
+Date: Sun, 18 Oct 2026 14:12:42 -0400
+Subject: [PATCH] mac-virtualcam: Offer 4K, 1440p and 720p formats
+
+The camera extension advertised a single 1920x1080 format even though
+OBS sends frames at its output resolution. Clients that honor the
+advertised format, such as video conferencing apps, therefore asked for
+1080p and had larger output scaled down by macOS.
+
+Offer 3840x2160, 2560x1440 and 1280x720 alongside 1920x1080, which
+stays first so the default format is unchanged, and report the format
+index a client selects instead of always 0.
+
+Tested on macOS 27.2 with OBS output at 3840x2160: the camera lists all
+four formats and TrueConf Client captures 3840x2160.
+
+This change was written with AI assistance and reviewed and tested by
+Chris Busillo. It is shared on a fork for reference, not submitted as a
+pull request, per the OBS AI policy.
+---
+ .../OBSCameraDeviceSource.swift               | 34 ++++++++++++++++++-
+ .../OBSCameraStreamSource.swift               | 13 +++----
+ 2 files changed, 40 insertions(+), 7 deletions(-)
+
+diff --git a/plugins/mac-virtualcam/src/camera-extension/OBSCameraDeviceSource.swift b/plugins/mac-virtualcam/src/camera-extension/OBSCameraDeviceSource.swift
+index 500c31dc4545c6..c6779039c7dde9 100644
+--- a/plugins/mac-virtualcam/src/camera-extension/OBSCameraDeviceSource.swift
++++ b/plugins/mac-virtualcam/src/camera-extension/OBSCameraDeviceSource.swift
+@@ -14,6 +14,17 @@ import os.log
+ 
+ let OBSCameraFrameRate: Int = 60
+ 
++// Formats offered to camera clients. OBS sends frames at its output
++// resolution whichever format a client picks; listing larger sizes lets
++// clients that honor the format, such as video conferencing apps, ask for
++// more than 1080p. 1920x1080 stays first so the default is unchanged.
++let OBSCameraFormatDimensions: [CMVideoDimensions] = [
++    CMVideoDimensions(width: 1920, height: 1080),
++    CMVideoDimensions(width: 3840, height: 2160),
++    CMVideoDimensions(width: 2560, height: 1440),
++    CMVideoDimensions(width: 1280, height: 720),
++]
++
+ class OBSCameraDeviceSource: NSObject, CMIOExtensionDeviceSource {
+     private(set) var device: CMIOExtensionDevice!
+ 
+@@ -77,10 +88,31 @@ class OBSCameraDeviceSource: NSObject, CMIOExtensionDeviceSource {
+         )
+         _bufferAuxAttributes = [kCVPixelBufferPoolAllocationThresholdKey: 5]
+ 
++        let sourceFormats = OBSCameraFormatDimensions.map { size -> CMIOExtensionStreamFormat in
++            if size.width == dimensions.width && size.height == dimensions.height {
++                return videoStreamFormat
++            }
++            var description: CMFormatDescription!
++            CMVideoFormatDescriptionCreate(
++                allocator: kCFAllocatorDefault,
++                codecType: kCVPixelFormatType_32BGRA,
++                width: size.width,
++                height: size.height,
++                extensions: nil,
++                formatDescriptionOut: &description
++            )
++            return CMIOExtensionStreamFormat.init(
++                formatDescription: description,
++                maxFrameDuration: CMTime(value: 1, timescale: Int32(OBSCameraFrameRate)),
++                minFrameDuration: CMTime(value: 1, timescale: Int32(OBSCameraFrameRate)),
++                validFrameDurations: nil
++            )
++        }
++
+         _streamSource = OBSCameraStreamSource(
+             localizedName: "OBS Camera Extension Stream Source",
+             streamID: sourceUUID,
+-            streamFormat: videoStreamFormat,
++            streamFormats: sourceFormats,
+             device: device
+         )
+ 
+diff --git a/plugins/mac-virtualcam/src/camera-extension/OBSCameraStreamSource.swift b/plugins/mac-virtualcam/src/camera-extension/OBSCameraStreamSource.swift
+index 55d8d379052f20..453c53b267a581 100644
+--- a/plugins/mac-virtualcam/src/camera-extension/OBSCameraStreamSource.swift
++++ b/plugins/mac-virtualcam/src/camera-extension/OBSCameraStreamSource.swift
+@@ -15,14 +15,14 @@ class OBSCameraStreamSource: NSObject, CMIOExtensionStreamSource {
+ 
+     let device: CMIOExtensionDevice
+ 
+-    private let _streamFormat: CMIOExtensionStreamFormat
++    private let _streamFormats: [CMIOExtensionStreamFormat]
+ 
+     init(
+-        localizedName: String, streamID: UUID, streamFormat: CMIOExtensionStreamFormat,
++        localizedName: String, streamID: UUID, streamFormats: [CMIOExtensionStreamFormat],
+         device: CMIOExtensionDevice
+     ) {
+         self.device = device
+-        self._streamFormat = streamFormat
++        self._streamFormats = streamFormats
+         super.init()
+         self.stream = CMIOExtensionStream(
+             localizedName: localizedName,
+@@ -34,13 +34,14 @@ class OBSCameraStreamSource: NSObject, CMIOExtensionStreamSource {
+     }
+ 
+     var formats: [CMIOExtensionStreamFormat] {
+-        return [_streamFormat]
++        return _streamFormats
+     }
+ 
+     var activeFormatIndex: Int = 0 {
+         didSet {
+-            if activeFormatIndex >= 1 {
++            if activeFormatIndex >= _streamFormats.count {
+                 os_log(.error, "Invalid index")
++                activeFormatIndex = 0
+             }
+         }
+     }
+@@ -55,7 +56,7 @@ class OBSCameraStreamSource: NSObject, CMIOExtensionStreamSource {
+         let streamProperties = CMIOExtensionStreamProperties(dictionary: [:])
+ 
+         if properties.contains(.streamActiveFormatIndex) {
+-            streamProperties.activeFormatIndex = 0
++            streamProperties.activeFormatIndex = activeFormatIndex
+         }
+         if properties.contains(.streamFrameDuration) {
+             let frameDuration = CMTime(value: 1, timescale: Int32(OBSCameraFrameRate))

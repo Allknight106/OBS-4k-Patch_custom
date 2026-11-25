@@ -1,0 +1,52 @@
+name: Check mainline OBS
+
+# Every Monday, compare the latest OBS release with the patch in this repo.
+# Opens an issue when there's a new OBS version to rebuild for, when the patch
+# or renames no longer apply, or when mainline OBS changes the virtual camera
+# formats itself (it may have fixed the 1080p limit).
+on:
+  schedule:
+    - cron: "0 14 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check latest OBS release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          scripts/check-upstream.sh | tee report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open an issue if something needs attention
+        if: steps.check.outputs.needs_attention == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.check.outputs.latest }}
+          NEW_RELEASE: ${{ steps.check.outputs.new_release }}
+          PATCH_OK: ${{ steps.check.outputs.patch_ok }}
+          RENAMES_OK: ${{ steps.check.outputs.renames_ok }}
+          UPSTREAM_FIXED: ${{ steps.check.outputs.upstream_fixed }}
+        run: |
+          if [ "$PATCH_OK" != true ] || [ "$RENAMES_OK" != true ]; then
+            title="OBS $LATEST: the 4K patch needs updating"
+          elif [ "$UPSTREAM_FIXED" = true ]; then
+            title="Mainline OBS changed the virtual camera formats (4K may be fixed upstream)"
+          else
+            title="OBS $LATEST is out: rebuild OBS Studio 4K"
+          fi
+          existing="$(gh issue list --state open --search "in:title \"$title\"" --json title --jq '.[].title')"
+          if printf '%s\n' "$existing" | grep -qxF "$title"; then
+            echo "Issue already open: $title"
+          else
+            gh issue create --title "$title" --body-file report.md
+          fi

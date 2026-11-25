@@ -1,0 +1,19 @@
+# Text replacements applied to the OBS source after the patches.
+# They give the build its own app and camera IDs so it can be signed with your
+# own Apple Developer team and installed next to stock OBS.
+#
+# Format: file | text to find | replacement
+# Placeholders: @PREFIX@ (bundle ID prefix), @APP_NAME@, @CAMERA_NAME@
+# Every line must match at least once, or the build stops (and the weekly
+# check reports it), so an upstream change can't silently skip a rename.
+
+cmake/macos/helpers.cmake | com.obsproject.obs-studio | @PREFIX@
+cmake/macos/helpers.cmake | INFOPLIST_KEY_CFBundleDisplayName "OBS Studio" | INFOPLIST_KEY_CFBundleDisplayName "@APP_NAME@"
+frontend/cmake/macos/entitlements-extension.plist | com.obsproject.obs-studio | @PREFIX@
+frontend/cmake/macos/exportOptions-extension.plist.in | com.obsproject.obs-studio | @PREFIX@
+plugins/mac-virtualcam/src/obs-plugin/plugin-main.mm | com.obsproject.obs-studio.mac-camera-extension | @PREFIX@.mac-camera-extension
+plugins/mac-virtualcam/src/camera-extension/CMakeLists.txt | com.obsproject.obs-studio.mac-camera-extension | @PREFIX@.mac-camera-extension
+plugins/mac-virtualcam/src/camera-extension/CMakeLists.txt | INFOPLIST_KEY_CFBundleDisplayName "OBS Virtual Camera" | INFOPLIST_KEY_CFBundleDisplayName "@CAMERA_NAME@"
+plugins/mac-virtualcam/src/camera-extension/cmake/macos/entitlements.plist | com.obsproject.obs-studio | @PREFIX@
+plugins/mac-virtualcam/src/camera-extension/OBSCameraProviderSource.swift | localizedName: "OBS Virtual Camera", | localizedName: "@CAMERA_NAME@",
+plugins/obs-browser/cmake/os-macos.cmake | com.obsproject.obs-studio | @PREFIX@
